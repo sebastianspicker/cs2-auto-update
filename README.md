@@ -1,83 +1,113 @@
-# CS2 Auto Update Script
-This repository contains a robust Bash script designed to automatically update your Counter-Strike 2 Dedicated Server using SteamCMD. The script stops the CS2 service, runs the update, and restarts the service if an update is applied. It includes detailed logging, error handling with retries, and an update-check mechanism to avoid unnecessary restarts.
+# CS2 Auto‑Update Script
+
+A robust, modular Bash script that keeps your Counter‑Strike 2 Dedicated Server up‑to‑date. It stops the CS2 service, runs a SteamCMD update, and restarts the service **only if** new updates were applied (or to ensure it’s running). Built‑in logging, error handling, retries and disk‑space checks make it production‑ready.
+
+## Table of Contents
+
+- Features  
+- Requirements  
+- Installation  
+- Configuration  
+- Usage  
+  - Manual Execution  
+  - Scheduling with Cron  
+- Log Rotation  
+- Workflow  
+- Customization  
+- Troubleshooting  
+- License  
 
 ## Features
 
-- **Service Management:**  
-  - Stops the CS2 service (`cs2.service`) before performing the update.
-  - Restarts the service after the update is complete (only if an update was applied).
-  - Implements retry logic for stopping and starting the service.
+- **Modular Design**  
+  Each logical step lives in its own function (`init_lock()`, `check_space()`, `stop_service()`, etc.) for clarity and maintainability.
 
-- **Update Process:**  
-  - Executes SteamCMD to update the server installation.
-  - Checks SteamCMD output to determine whether an update was necessary.
-  - Avoids a restart if the server is already up-to-date.
+- **Precise Update Detection**  
+  Uses a regular expression to match variants of “already up‑to‑date” **or** “download complete.” Avoids reliance on a single literal string.
 
-- **Robust Error Handling:**  
-  - Uses a lockfile to prevent concurrent script executions.
-  - Checks for sufficient free disk space before proceeding.
-  - Aborts the process if any critical step fails.
+- **Service Management with Retries**  
+  Stops and starts the systemd service (`cs2.service`) with configurable retry attempts.
 
-- **Logging:**  
-  - Logs every step with timestamps into a log file.
-  - Can be integrated with logrotate to prevent unbounded log growth.
+- **Lockfile Mechanism**  
+  Prevents concurrent runs; cleans up reliably even on unexpected exits (`trap cleanup EXIT`).
+
+- **Disk‑Space Check**  
+  Verifies at least 5 GB (configurable) is free before fetching updates.
+
+- **SteamCMD as Non‑Root**  
+  Invokes SteamCMD under the `steam` user to keep ownerships and permissions correct.
+
+- **Comprehensive Logging**  
+  Logs every action with timestamps to `/home/steam/update_cs2.log`. Designed to work with logrotate.
 
 ## Requirements
 
-- **Operating System:** Ubuntu 22.04 (or a compatible Linux distribution)
-- **User:** The script is intended to be run as the root user (e.g., via cron) to manage system services without sudo password prompts.
-- **SteamCMD:** Must be installed and accessible (commonly located at `/usr/games/steamcmd`).
-- **CS2 Installation:** The CS2 server should be installed in `/home/steam/cs2`
-- **Systemd:** For managing the CS2 service (the service is named `cs2.service`)
+- **OS:** Ubuntu 22.04 (or compatible)  
+- **User Setup:**  
+  - CS2 files installed under `/home/steam/cs2`  
+  - Systemd service named `cs2.service`  
+- **Tools:**  
+  - `steamcmd` installed (typically `/usr/games/steamcmd`)  
+  - Bash shell (script uses `set -e` and `pipefail`)  
 
 ## Installation
 
-1. **Clone this Repository:**
-
+1. Clone Repository  
    ```bash
    git clone https://github.com/yourusername/cs2-auto-update.git
-   cd cs2-auto-update´´´
+   cd cs2-auto-update
    ```
-2. **Deploy the Script:**
-   Copy the update_cs2.sh script to your desired location (for example, /home/steam/update_cs2.sh):
+
+2. Deploy Script  
    ```bash
    cp update_cs2.sh /home/steam/update_cs2.sh
    ```
-3. **Set Permissions:**
-   Make the script executable:
+
+3. Make Executable  
    ```bash
    chmod +x /home/steam/update_cs2.sh
    ```
-4. **Review and Configure:**
-   Open /home/steam/update_cs2.sh in your favorite text editor and adjust the following variables as needed:
-    - LOCKFILE: Path to the lock file (default: `/tmp/update_cs2.lock`)
-    - LOGFILE: Path to the log file (default: `/home/steam/update_cs2.log`)
-    - CS2_DIR: Directory where your CS2 server is installed (default: `/home/steam/cs2`)
-    - REQUIRED_SPACE: Minimum free space required in KB (default: `5000000` for ~5GB)
-    - MAX_ATTEMPTS: Maximum number of attempts to stop/start the service (default: `5`)
+
+## Configuration
+
+At the top of `/home/steam/update_cs2.sh`, adjust:
+
+| Variable         | Description                                        | Default                         |
+|------------------|----------------------------------------------------|---------------------------------|
+| `LOCKFILE`       | Path to the lockfile                               | `/tmp/update_cs2.lock`          |
+| `LOGFILE`        | Path to the log file                               | `/home/steam/update_cs2.log`    |
+| `CS2_DIR`        | CS2 installation directory                         | `/home/steam/cs2`               |
+| `SERVICE_NAME`   | Systemd service name                               | `cs2.service`                   |
+| `REQUIRED_SPACE` | Minimum free space in KB before updating           | `5000000` (≈5 GB)               |
+| `MAX_ATTEMPTS`   | Retry attempts for stopping/starting the service   | `5`                             |
 
 ## Usage
 
 ### Manual Execution
-** To manually update your CS2 server, run:**
-  ```bash
-  /home/steam/update_cs2.sh
-  ```
-The script will log its output to /home/steam/update_cs2.log.
+
+```bash
+sudo /home/steam/update_cs2.sh
+```
+
+The script will log its progress to `/home/steam/update_cs2.log`.
 
 ### Scheduling with Cron
-To schedule the script to run, e.g., daily at 07:00 AM, add the following entry to the root crontab:
-  1. Open the root crontab for editing:
-  ```bash
-  sudo crontab -e
-  ```
-  2. Add this line:
-  ```bash
-  0 7 * * * /home/steam/update_cs2.sh >> /home/steam/update_cs2.log 2>&1
-  ```
+
+Run as root so no password prompts are needed:
+
+1. Edit root’s crontab:  
+   ```bash
+   sudo crontab -e
+   ```
+2. Add the entry to run daily at 07:00:  
+   ```cron
+   0 7 * * * /home/steam/update_cs2.sh >> /home/steam/update_cs2.log 2>&1
+   ```
 
 ## Log Rotation
-To prevent the log file from growing indefinitely, create a Logrotate configuration. For example, create `/etc/logrotate.d/cs2_update` with the following content:
+
+Create `/etc/logrotate.d/cs2_update`:
+
 ```conf
 /home/steam/update_cs2.log {
     daily
@@ -89,40 +119,52 @@ To prevent the log file from growing indefinitely, create a Logrotate configurat
     create 0644 steam steam
     sharedscripts
     postrotate
-        # Optional: Add any post-rotation commands here.
+        # No service reload needed
     endscript
 }
 ```
-This configuration rotates the log file daily, keeps 7 old logs, compresses them, and ensures that the log file is recreated with the proper permissions.
 
-## Script Workflow
-1. Lockfile Creation:
-   The script creates a lockfile to prevent multiple instances from running simultaneously.
-2. Disk Space Check:
-   It verifies that there is enough free disk space in the CS2 installation directory.
-3. Service Stop:
-   The script attempts to stop the CS2 service (cs2.service) with retry logic.
-4. SteamCMD Update:
-   The update is executed via SteamCMD. The script checks the output for the phrase "already up-to-date" to determine if any updates were applied.
-5. Service Start:
-   If an update is applied (or if the service was stopped), the script restarts the CS2 service with retries if necessary.
-6. Logging:
-   All steps are logged with timestamps to a specified log file.
-7. Lockfile Removal:
-   Finally, the lockfile is removed so that future updates can run.
+- **daily:** rotate every day  
+- **rotate 7:** keep one week of logs  
+- **compress/delaycompress:** gzip old logs  
 
-## Customization and Improvements
-- Notifications:
-  You can extend the script to send notifications (via email or messaging services) in case of failures or successful updates.
-- External Configuration:
-  Consider moving configuration variables into a separate file to simplify maintenance.
-- Enhanced Debugging:
-  More detailed logging or verbose mode can help troubleshoot issues.
+## Workflow
+
+1. **Lockfile**  
+   Prevents overlapping runs.  
+2. **Disk‑Space Check**  
+   Aborts if insufficient space.  
+3. **Stop Service**  
+   Retries up to `MAX_ATTEMPTS` on failure.  
+4. **SteamCMD Update**  
+   Runs under `steam` user; captures output.  
+5. **Update Detection**  
+   Uses regex to detect if new files were downloaded.  
+6. **Start Service**  
+   If updated (or simply to ensure it’s running), restarts with retries.  
+7. **Cleanup**  
+   Removes lockfile on normal or abnormal exit.  
+
+## Customization
+
+- **Notifications:**  
+  Integrate email/Slack/Telegram alerts on success or failure.  
+- **External Config:**  
+  Move variables into `/etc/cs2-update.conf` for easier maintenance.  
+- **Verbose Mode:**  
+  Add a `--verbose` flag to increase log detail.  
 
 ## Troubleshooting
-- Lockfile Issues:
-  If the script complains that an update process is already running, check and remove `/tmp/update_cs2.lock` manually if needed.
-- Permission Errors:
-  Ensure that the script and log directories have the correct permissions.
-- Service Not Restarting:
-  Verify that the CS2 service is properly defined in systemd and that the paths and parameters in the script match your setup.
+
+- **“Already running” message:**  
+  Remove stale lockfile:  
+  ```bash
+  rm -f /tmp/update_cs2.lock
+  ```
+- **Permission Denied:**  
+  Ensure script, log directory, and CS2 files are owned by `steam` and/or accessible by root.  
+- **Service Fails to Start/Stop:**  
+  Verify `cs2.service` exists and works manually:  
+  ```bash
+  systemctl status cs2.service
+  ```
