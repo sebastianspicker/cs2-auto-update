@@ -2,11 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
-
-### Added
-- Placeholder for future enhancements and fixes.
-
 ## [1.2.0] - 2025-04-18
 ### Added
 - **Precise update detection:** Regex pattern extended to match both `up-to-date` variants and `download complete`.
