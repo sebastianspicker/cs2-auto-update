@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Minimal stub for tests: ignore user switching and run the command.
+if [ "${1:-}" = "-u" ]; then
+    shift 2 || true
+fi
+if [ "${1:-}" = "--" ]; then
+    shift || true
+fi
+
+exec "$@"

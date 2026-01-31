@@ -1,0 +1,15 @@
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Local temp
+tmp/
+*.tmp
+

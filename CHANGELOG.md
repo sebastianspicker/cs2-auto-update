@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-01-31
+### Added
+- Remote buildid check via `steamcmd +app_info_print` to avoid unnecessary service restarts when up-to-date.
+- Lightweight stub-based test harness (`tests/run.sh`) to validate control flow without Steam/systemd.
+- New config knobs: `CS2_APP_ID`, `SLEEP_SECS` plus test helpers `ALLOW_NONROOT`/`NO_SLEEP`.
+
+### Changed
+- Running SteamCMD as `steam` no longer requires `sudo` specifically; the script uses `runuser`/`su`/`sudo` (best-effort).
+- Preserve existing `PATH` (append `/usr/games`) instead of overwriting it.
+
+## [1.3.0] - 2026-01-31
+### Added
+- Local/CI lint tooling via `scripts/lint.sh` and GitHub Actions.
+- `shfmt` auto-format helper via `scripts/fmt.sh`.
+- Optional buildid-based update detection via `steamapps/appmanifest_730.acf`.
+
+### Changed
+- Switched lockfile to an atomic lock directory (`LOCKDIR`) to avoid startup races.
+- Hardened script with `set -euo pipefail` and explicit dependency checks.
+- Logging now writes to stdout and appends to `LOGFILE` (better for cron/journald).
+
 ## [1.2.0] - 2025-04-18
 ### Added
 - **Precise update detection:** Regex pattern extended to match both `up-to-date` variants and `download complete`.

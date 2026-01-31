@@ -1,6 +1,6 @@
 # CS2 Auto‑Update Script
 
-A robust, modular Bash script that keeps your Counter‑Strike 2 Dedicated Server up‑to‑date. It stops the CS2 service, runs a SteamCMD update, and restarts the service **only if** new updates were applied (or to ensure it’s running). Built‑in logging, error handling, retries and disk‑space checks make it production‑ready.
+A robust, modular Bash script that keeps your Counter‑Strike 2 Dedicated Server up‑to‑date. It checks the remote buildid via SteamCMD and only stops/updates/restarts the service when an update is required (otherwise it leaves the service running). Built‑in logging, error handling, retries, and disk‑space checks make it production‑ready.
 
 ## Table of Contents
 
@@ -23,19 +23,19 @@ A robust, modular Bash script that keeps your Counter‑Strike 2 Dedicated Serv
   Each logical step lives in its own function (`init_lock()`, `check_space()`, `stop_service()`, etc.) for clarity and maintainability.
 
 - **Precise Update Detection**  
-  Uses a regular expression to match variants of “already up‑to‑date” **or** “download complete.” Avoids reliance on a single literal string.
+  Compares local appmanifest buildid against the remote public-branch buildid from `steamcmd +app_info_print` (best-effort). Falls back to a safe update run if the buildid can’t be determined.
 
 - **Service Management with Retries**  
   Stops and starts the systemd service (`cs2.service`) with configurable retry attempts.
 
-- **Lockfile Mechanism**  
-  Prevents concurrent runs; cleans up reliably even on unexpected exits (`trap cleanup EXIT`).
+- **Lock Mechanism**  
+  Prevents concurrent runs with an atomic lock directory; cleans up reliably even on unexpected exits (`trap cleanup EXIT`).
 
 - **Disk‑Space Check**  
   Verifies at least 5 GB (configurable) is free before fetching updates.
 
 - **SteamCMD as Non‑Root**  
-  Invokes SteamCMD under the `steam` user to keep ownerships and permissions correct.
+  Invokes SteamCMD under the `steam` user (via `runuser`/`su`/`sudo`) to keep ownerships and permissions correct.
 
 - **Comprehensive Logging**  
   Logs every action with timestamps to `/home/steam/update_cs2.log`. Designed to work with logrotate.
@@ -48,6 +48,7 @@ A robust, modular Bash script that keeps your Counter‑Strike 2 Dedicated Serv
   - Systemd service named `cs2.service`  
 - **Tools:**  
   - `steamcmd` installed (typically `/usr/games/steamcmd`)  
+  - `runuser` (or `su`/`sudo`) available to run SteamCMD as `steam`  
   - Bash shell (script uses `set -e` and `pipefail`)  
 
 ## Installation
@@ -74,12 +75,15 @@ At the top of `/home/steam/update_cs2.sh`, adjust:
 
 | Variable         | Description                                        | Default                         |
 |------------------|----------------------------------------------------|---------------------------------|
-| `LOCKFILE`       | Path to the lockfile                               | `/tmp/update_cs2.lock`          |
+| `LOCKDIR`        | Path to the lock (directory)                       | `/tmp/update_cs2.lock`          |
 | `LOGFILE`        | Path to the log file                               | `/home/steam/update_cs2.log`    |
 | `CS2_DIR`        | CS2 installation directory                         | `/home/steam/cs2`               |
 | `SERVICE_NAME`   | Systemd service name                               | `cs2.service`                   |
+| `STEAMCMD`       | Path to the SteamCMD binary                        | `/usr/games/steamcmd`           |
+| `CS2_APP_ID`     | Steam App ID                                       | `730`                           |
 | `REQUIRED_SPACE` | Minimum free space in KB before updating           | `5000000` (≈5 GB)               |
 | `MAX_ATTEMPTS`   | Retry attempts for stopping/starting the service   | `5`                             |
+| `SLEEP_SECS`     | Sleep between retries (seconds)                    | `5`                             |
 
 ## Usage
 
@@ -89,7 +93,7 @@ At the top of `/home/steam/update_cs2.sh`, adjust:
 sudo /home/steam/update_cs2.sh
 ```
 
-The script will log its progress to `/home/steam/update_cs2.log`.
+The script logs to stdout **and** appends to `/home/steam/update_cs2.log`.
 
 ### Scheduling with Cron
 
@@ -101,7 +105,7 @@ Run as root so no password prompts are needed:
    ```
 2. Add the entry to run daily at 07:00:  
    ```cron
-   0 7 * * * /home/steam/update_cs2.sh >> /home/steam/update_cs2.log 2>&1
+   0 7 * * * /home/steam/update_cs2.sh
    ```
 
 ## Log Rotation
@@ -130,20 +134,20 @@ Create `/etc/logrotate.d/cs2_update`:
 
 ## Workflow
 
-1. **Lockfile**  
+1. **Lock**  
    Prevents overlapping runs.  
 2. **Disk‑Space Check**  
    Aborts if insufficient space.  
-3. **Stop Service**  
+3. **Update Check**  
+   Compares local appmanifest buildid with remote buildid (best-effort).  
+4. **Stop Service (if needed)**  
    Retries up to `MAX_ATTEMPTS` on failure.  
-4. **SteamCMD Update**  
+5. **SteamCMD Update (if needed)**  
    Runs under `steam` user; captures output.  
-5. **Update Detection**  
-   Uses regex to detect if new files were downloaded.  
-6. **Start Service**  
-   If updated (or simply to ensure it’s running), restarts with retries.  
+6. **Start Service (if needed)**  
+   Restarts with retries.  
 7. **Cleanup**  
-   Removes lockfile on normal or abnormal exit.  
+   Removes lock on normal or abnormal exit.  
 
 ## Customization
 
@@ -157,9 +161,9 @@ Create `/etc/logrotate.d/cs2_update`:
 ## Troubleshooting
 
 - **“Already running” message:**  
-  Remove stale lockfile:  
+  Remove stale lock:  
   ```bash
-  rm -f /tmp/update_cs2.lock
+  rm -rf /tmp/update_cs2.lock
   ```
 - **Permission Denied:**  
   Ensure script, log directory, and CS2 files are owned by `steam` and/or accessible by root.  
@@ -168,3 +172,25 @@ Create `/etc/logrotate.d/cs2_update`:
   ```bash
   systemctl status cs2.service
   ```
+
+## Validation (CI / Local)
+
+Run the same checks locally as CI:
+
+```bash
+./scripts/lint.sh
+```
+
+GitHub Actions runs this on every push and pull request.
+
+Run lightweight logic tests (no Steam/systemd required; uses stubs):
+
+```bash
+./tests/run.sh
+```
+
+Auto-format:
+
+```bash
+./scripts/fmt.sh
+```

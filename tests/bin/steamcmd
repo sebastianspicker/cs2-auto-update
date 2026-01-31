@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_id="${CS2_APP_ID:-730}"
+cs2_dir="${CS2_DIR:-/tmp/cs2}"
+manifest="${cs2_dir%/}/steamapps/appmanifest_${app_id}.acf"
+
+remote="${REMOTE_BUILDID:-}"
+update_exit="${STEAMCMD_UPDATE_EXIT:-0}"
+
+args="$*"
+
+if grep -Fq "+app_info_print" <<< "$args"; then
+    cat << EOF
+"$app_id"
+{
+  "branches"
+  {
+    "public"
+    {
+      "buildid" "$remote"
+    }
+  }
+}
+EOF
+    exit 0
+fi
+
+if grep -Fq "+app_update" <<< "$args"; then
+    if [ "$update_exit" -ne 0 ]; then
+        echo "ERROR! SteamCMD simulated failure" >&2
+        exit "$update_exit"
+    fi
+
+    if [ -n "$remote" ]; then
+        mkdir -p "$(dirname "$manifest")"
+        cat > "$manifest" << EOF
+"AppState"
+{
+    "appid"  "$app_id"
+    "buildid"    "$remote"
+}
+EOF
+    fi
+
+    echo "Downloading update..."
+    echo "download complete"
+    exit 0
+fi
+
+echo "unsupported steamcmd args: $args" >&2
+exit 2

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${1:-}" != "--output=avail" ]; then
+    echo "unsupported df args: $*" >&2
+    exit 2
+fi
+
+avail="${DF_AVAIL:-6000000}"
+printf 'Avail\n%s\n' "$avail"

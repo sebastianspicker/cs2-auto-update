@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+calls_file="${SYSTEMCTL_CALLS_FILE:-/tmp/systemctl.calls}"
+state_file="${SYSTEMCTL_STATE_FILE:-/tmp/systemctl.state}"
+
+action="${1:-}"
+shift || true
+
+case "$action" in
+    stop)
+        echo "stop" >> "$calls_file"
+        echo "inactive" > "$state_file"
+        exit 0
+        ;;
+    start)
+        echo "start" >> "$calls_file"
+        echo "active" > "$state_file"
+        exit 0
+        ;;
+    is-active)
+        echo "is-active" >> "$calls_file"
+        if [ "${1:-}" = "--quiet" ]; then
+            shift || true
+        fi
+        state="inactive"
+        if [ -f "$state_file" ]; then
+            state="$(cat "$state_file")"
+        fi
+        if [ "$state" = "active" ]; then
+            exit 0
+        fi
+        exit 3
+        ;;
+    *)
+        echo "unsupported systemctl action: $action" >&2
+        exit 2
+        ;;
+esac
