@@ -189,6 +189,12 @@ Run lightweight logic tests (no Steam/systemd required; uses stubs):
 ./tests/run.sh
 ```
 
+Run security checks (secret scan + dependency manifest gate):
+
+```bash
+./scripts/security.sh
+```
+
 Auto-format:
 
 ```bash

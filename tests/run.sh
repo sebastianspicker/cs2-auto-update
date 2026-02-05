@@ -45,11 +45,12 @@ EOF
 }
 
 run_case() {
-    local name local_build remote_build update_exit
+    local name local_build remote_build update_exit initial_state
     name="$1"
     local_build="$2"
     remote_build="$3"
     update_exit="$4" # 0 or 1
+    initial_state="${5:-active}"
 
     echo "==> $name"
 
@@ -73,7 +74,7 @@ run_case() {
 
     export SYSTEMCTL_CALLS_FILE="$tmpdir/systemctl.calls"
     export SYSTEMCTL_STATE_FILE="$tmpdir/systemctl.state"
-    echo "active" > "$SYSTEMCTL_STATE_FILE"
+    echo "$initial_state" > "$SYSTEMCTL_STATE_FILE"
 
     set +e
     ./update_cs2.sh > "$tmpdir/stdout" 2> "$tmpdir/stderr"
@@ -107,6 +108,19 @@ run_case() {
             assert_contains "stop" "$calls"
             assert_contains "start" "$calls"
             ;;
+        "fallback-update")
+            [ "$rc" -eq 0 ] || fail "expected rc=0, got $rc; stderr=$stderr"
+            assert_contains "falling back to safe update run" "$stdout"
+            assert_contains "stop" "$calls"
+            assert_contains "start" "$calls"
+            ;;
+        "no-update-service-inactive")
+            [ "$rc" -eq 0 ] || fail "expected rc=0, got $rc; stderr=$stderr"
+            assert_contains "No update required" "$stdout"
+            assert_contains "not running; starting" "$stdout"
+            assert_not_contains "stop" "$calls"
+            assert_contains "start" "$calls"
+            ;;
         *)
             fail "unknown case: $name"
             ;;
@@ -116,5 +130,7 @@ run_case() {
 run_case "no-update" "100" "100" "0"
 run_case "update-applied" "100" "200" "0"
 run_case "update-failed" "100" "200" "1"
+run_case "fallback-update" "100" "" "0"
+run_case "no-update-service-inactive" "100" "100" "0" "inactive"
 
 echo "OK"

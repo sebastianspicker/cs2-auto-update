@@ -260,7 +260,6 @@ require_root
 ensure_logfile_writable
 require_cmd awk
 require_cmd df
-require_cmd grep
 require_cmd systemctl
 
 if [ ! -x "$STEAMCMD" ]; then

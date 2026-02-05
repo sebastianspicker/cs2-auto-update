@@ -7,6 +7,7 @@ files=(
     update_cs2.sh
     scripts/lint.sh
     scripts/fmt.sh
+    scripts/security.sh
     tests/run.sh
     tests/bin/df
     tests/bin/runuser

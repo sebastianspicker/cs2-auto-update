@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a problem with the update script
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please avoid sharing secrets (tokens, keys, passwords).
+  - type: input
+    id: os
+    attributes:
+      label: OS / Distro
+      description: "Example: Ubuntu 22.04"
+      placeholder: "Ubuntu 22.04"
+    validations:
+      required: true
+  - type: input
+    id: steamcmd
+    attributes:
+      label: SteamCMD path
+      description: "Example: /usr/games/steamcmd"
+      placeholder: "/usr/games/steamcmd"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: "Include exact steps and commands used."
+      placeholder: "Steps to reproduce..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: "Expected behavior..."
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "Paste relevant log output (redact secrets)."
+      render: shell
+    validations:
+      required: false

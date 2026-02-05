@@ -1,15 +1,43 @@
 .DS_Store
+Thumbs.db
 
 # Editors
 .idea/
-.vscode/
 *.swp
 *.swo
+*.swn
+*.swm
+*~
+*.bak
+
+# docs (local findings/logs/decisions)
+.vscode/
+DECISIONS.md
+FINDINGS.md
+LOG.md
+REFACTOR_PLAN.md
 
 # Logs
 *.log
+logs/
 
-# Local temp
+# Temp
 tmp/
 *.tmp
+*.pid
+*.lock
 
+# Build / coverage
+dist/
+build/
+out/
+coverage/
+.nyc_output/
+
+# Caches
+.cache/
+
+# Env
+.env
+.env.*
+!.env.example

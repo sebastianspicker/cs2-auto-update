@@ -1,4 +1,4 @@
-.PHONY: lint fmt test ci
+.PHONY: lint fmt test security ci
 
 lint:
 	./scripts/lint.sh
@@ -9,5 +9,7 @@ fmt:
 test:
 	./tests/run.sh
 
-ci: lint test
+security:
+	./scripts/security.sh
 
+ci: lint test security
