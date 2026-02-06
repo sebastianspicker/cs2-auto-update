@@ -38,8 +38,6 @@ require_cmd() {
 
 require_cmd curl
 require_cmd tar
-require_cmd sha256sum
-
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 
@@ -71,6 +69,41 @@ case "$arch" in
         ;;
 esac
 
+sha256_file() {
+    local file
+    file="$1"
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+        return 0
+    fi
+    if command -v shasum > /dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+        return 0
+    fi
+    echo "Missing sha256sum or shasum for checksum verification." >&2
+    exit 2
+}
+
+shellcheck_expected_sha() {
+    case "${os}_${arch}" in
+        linux_x86_64)
+            echo "${SHELLCHECK_SHA256_LINUX_X86_64:-}"
+            ;;
+        linux_aarch64)
+            echo "${SHELLCHECK_SHA256_LINUX_AARCH64:-}"
+            ;;
+        darwin_x86_64)
+            echo "${SHELLCHECK_SHA256_DARWIN_X86_64:-}"
+            ;;
+        darwin_aarch64)
+            echo "${SHELLCHECK_SHA256_DARWIN_AARCH64:-}"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 install_shellcheck() {
     local current
     current=""
@@ -83,25 +116,24 @@ install_shellcheck() {
         return 0
     fi
 
-    if [ "$os" = "darwin" ] && [ "$arch" = "aarch64" ]; then
-        echo "No official shellcheck macOS arm64 binary in older releases. Install via Homebrew." >&2
-        exit 2
-    fi
-
     local filename url sha_url tmpdir
     filename="shellcheck-v${SHELLCHECK_VERSION}.${os}.${arch}.tar.xz"
     url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${filename}"
-    sha_url="https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${filename}.sha256"
+    local expected
+    expected=$(shellcheck_expected_sha)
+    if [ -z "$expected" ]; then
+        echo "Missing expected SHA256 for shellcheck on ${os}/${arch}. Update scripts/ci-tools-versions.env." >&2
+        exit 2
+    fi
 
     tmpdir="$(mktemp -d)"
 
     echo "Downloading shellcheck $SHELLCHECK_VERSION..."
     curl -fsSL "$url" -o "$tmpdir/$filename"
-    curl -fsSL "$sha_url" -o "$tmpdir/$filename.sha256"
-
-    local expected
-    expected=$(awk '{print $1}' "$tmpdir/$filename.sha256")
-    echo "${expected}  $tmpdir/$filename" | sha256sum -c - > /dev/null
+    if [ "$(sha256_file "$tmpdir/$filename")" != "$expected" ]; then
+        echo "shellcheck checksum mismatch for $filename" >&2
+        exit 2
+    fi
 
     tar -xJf "$tmpdir/$filename" -C "$tmpdir"
     install -m 0755 "$tmpdir/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" "$BIN_DIR/shellcheck"
@@ -124,17 +156,24 @@ install_shfmt() {
     local filename url sha_url tmpdir
     filename="shfmt_v${SHFMT_VERSION}_${os}_${shfmt_arch}"
     url="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/${filename}"
-    sha_url="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/${filename}.sha256"
+    sha_url="https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/sha256sums.txt"
 
     tmpdir="$(mktemp -d)"
 
     echo "Downloading shfmt $SHFMT_VERSION..."
     curl -fsSL "$url" -o "$tmpdir/$filename"
-    curl -fsSL "$sha_url" -o "$tmpdir/$filename.sha256"
+    curl -fsSL "$sha_url" -o "$tmpdir/sha256sums.txt"
 
     local expected
-    expected=$(awk '{print $1}' "$tmpdir/$filename.sha256")
-    echo "${expected}  $tmpdir/$filename" | sha256sum -c - > /dev/null
+    expected=$(awk -v f="$filename" '$2==f {print $1}' "$tmpdir/sha256sums.txt")
+    if [ -z "$expected" ]; then
+        echo "Missing shfmt checksum for $filename in sha256sums.txt" >&2
+        exit 2
+    fi
+    if [ "$(sha256_file "$tmpdir/$filename")" != "$expected" ]; then
+        echo "shfmt checksum mismatch for $filename" >&2
+        exit 2
+    fi
 
     install -m 0755 "$tmpdir/$filename" "$BIN_DIR/shfmt"
     rm -rf "$tmpdir"

@@ -15,7 +15,8 @@ Workflow: `CI` (`.github/workflows/ci.yml`)
 
 ## Tooling and Caching
 - CI installs pinned versions of `shellcheck` and `shfmt` via `scripts/ci-install-tools.sh`.
-- Versions are defined in `scripts/ci-tools-versions.env`.
+- Versions and shellcheck SHA256 checksums are defined in `scripts/ci-tools-versions.env`.
+- `shfmt` checksums are verified against `sha256sums.txt` from the official release.
 - Downloads are cached in `.cache/ci-tools` using `actions/cache`.
 
 ## Local Runs
