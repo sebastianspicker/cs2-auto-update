@@ -5,6 +5,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 files=(
     update_cs2.sh
+    scripts/ci-install-tools.sh
     scripts/lint.sh
     scripts/fmt.sh
     scripts/security.sh

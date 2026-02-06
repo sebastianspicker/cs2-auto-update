@@ -33,6 +33,26 @@ build/
 out/
 coverage/
 .nyc_output/
+test-results/
+junit.xml
+coverage.xml
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Python
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Terraform
+.terraform/
 
 # Caches
 .cache/

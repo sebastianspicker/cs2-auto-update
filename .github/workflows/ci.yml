@@ -2,31 +2,51 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  lint:
+  checks:
+    name: Lint • Test • Security
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        uses: actions/checkout@v4
 
-      - name: Install tools
+      - name: Cache CI tools
+        uses: actions/cache@v4
+        with:
+          path: .cache/ci-tools
+          key: ${{ runner.os }}-ci-tools-${{ hashFiles('scripts/ci-tools-versions.env') }}
+
+      - name: Install CI tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck shfmt
+          set -euo pipefail
+          ./scripts/ci-install-tools.sh
 
       - name: Lint
         run: |
+          set -euo pipefail
           ./scripts/lint.sh
 
       - name: Tests
         run: |
+          set -euo pipefail
           ./tests/run.sh
 
       - name: Security
         run: |
+          set -euo pipefail
           ./scripts/security.sh
