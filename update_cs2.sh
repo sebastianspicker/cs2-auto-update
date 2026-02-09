@@ -35,7 +35,7 @@ NO_SLEEP="${NO_SLEEP:-0}"
 
 #### Internal state ####
 CLEANUP_ENABLED=0
-UPDATE_OUTPUT=""
+TMP_UPDATE_OUTPUT=""
 
 #### Helper Functions ####
 log() {
@@ -48,13 +48,13 @@ log() {
     printf '%s\n' "$msg" >> "$LOGFILE" 2> /dev/null || true
 }
 
+# Read from stdin to avoid ARG_MAX when logging large output (e.g. SteamCMD).
 log_multiline() {
     local prefix line
-    prefix="$1"
-    shift
+    prefix="${1:-}"
     while IFS= read -r line; do
         log "${prefix}${line}"
-    done <<< "$*"
+    done
 }
 
 require_root() {
@@ -68,6 +68,16 @@ require_root() {
     fi
 }
 
+# Ensure the 'steam' user exists when we need to run commands as that user.
+require_steam_user() {
+    if [ "$ALLOW_NONROOT" = "1" ]; then
+        return 0
+    fi
+    if ! id -u steam > /dev/null 2>&1; then
+        exit_with_error "User 'steam' does not exist. Create it or set ALLOW_NONROOT=1 for testing."
+    fi
+}
+
 require_cmd() {
     local cmd
     cmd="$1"
@@ -75,10 +85,21 @@ require_cmd() {
 }
 
 ensure_logfile_writable() {
-    local logdir
+    local logdir created_dir
     logdir=$(dirname "$LOGFILE")
-    mkdir -p "$logdir" || exit_with_error "Failed to create log directory: $logdir"
+    created_dir=0
+    if [ ! -d "$logdir" ]; then
+        mkdir -p "$logdir" || exit_with_error "Failed to create log directory: $logdir"
+        created_dir=1
+    fi
     touch "$LOGFILE" 2> /dev/null || exit_with_error "Log file is not writable: $LOGFILE"
+    # When running as root and we created the dir or file, allow steam user to write (e.g. shared log).
+    if [ "${EUID:-$(id -u)}" -eq 0 ] && [ "$ALLOW_NONROOT" != "1" ]; then
+        if [ "$created_dir" -eq 1 ]; then
+            chown steam:steam "$logdir" 2> /dev/null || true
+        fi
+        chown steam:steam "$LOGFILE" 2> /dev/null || true
+    fi
 }
 
 sleep_s() {
@@ -99,8 +120,13 @@ exit_with_error() {
 }
 
 cleanup() {
-    # Remove the lock dir if it was created by this run.
-    if [ "$CLEANUP_ENABLED" -eq 1 ] && [ -d "$LOCKDIR" ]; then
+    # Remove temp file used for SteamCMD output (if any).
+    if [ -n "$TMP_UPDATE_OUTPUT" ] && [ -f "$TMP_UPDATE_OUTPUT" ]; then
+        rm -f "$TMP_UPDATE_OUTPUT"
+        TMP_UPDATE_OUTPUT=""
+    fi
+    # Remove the lock dir only if we created it and it is not a symlink (safety).
+    if [ "$CLEANUP_ENABLED" -eq 1 ] && [ -d "$LOCKDIR" ] && [ ! -L "$LOCKDIR" ]; then
         rmdir "$LOCKDIR" 2> /dev/null || rm -rf "$LOCKDIR"
         log "Lock removed."
     fi
@@ -121,11 +147,16 @@ init_lock() {
 }
 
 #### Step 2: Check Disk Space ####
+# GNU df --output=avail uses 1024-byte blocks; REQUIRED_SPACE is in KB.
 check_space() {
     local avail
     avail=$(df --output=avail "$CS2_DIR" 2> /dev/null | awk 'NR==2 {print $1}')
     if [ -z "$avail" ]; then
         exit_with_error "Failed to determine free disk space for: $CS2_DIR"
+    fi
+    avail="${avail//[[:space:]]/}"
+    if ! [[ "$avail" =~ ^[0-9]+$ ]]; then
+        exit_with_error "Invalid disk space value from df: $avail"
     fi
     if [ "$avail" -lt "$REQUIRED_SPACE" ]; then
         exit_with_error "Not enough free disk space ($avail KB available, $REQUIRED_SPACE KB required)."
@@ -145,9 +176,15 @@ run_as_steam() {
             return $?
         fi
         if command -v su > /dev/null 2>&1; then
-            # shellcheck disable=SC2024
-            su -s /bin/bash -c "$(printf '%q ' "$@")" steam
-            return $?
+            # Use a wrapper script to avoid ARG_MAX with long -c command line.
+            local su_script su_ret
+            su_script=$(mktemp)
+            printf '%s\n' "$@" >> "$su_script"
+            chmod 644 "$su_script" 2> /dev/null || true
+            su -s /bin/bash -c 'cmd=$(head -n1 "$1"); args=(); while IFS= read -r line; do args+=("$line"); done < <(tail -n +2 "$1"); exec "$cmd" "${args[@]}"' steam "$su_script"
+            su_ret=$?
+            rm -f "$su_script"
+            return $su_ret
         fi
         if command -v sudo > /dev/null 2>&1; then
             sudo -u steam "$@"
@@ -156,8 +193,7 @@ run_as_steam() {
         exit_with_error "Need one of: runuser, su, sudo (to run SteamCMD as 'steam' user)."
     fi
 
-    require_cmd sudo
-    sudo -u steam "$@"
+    exit_with_error "Must run as root or set ALLOW_NONROOT=1 (cannot run as 'steam' user)."
 }
 
 retry_systemctl() {
@@ -188,19 +224,22 @@ stop_service() {
 
 #### Step 4: Run SteamCMD Update ####
 run_update() {
+    local update_ret
+    TMP_UPDATE_OUTPUT=$(mktemp)
     log "Running SteamCMD update as 'steam' user..."
-    if ! UPDATE_OUTPUT=$(run_as_steam "$STEAMCMD" +login anonymous \
+    update_ret=0
+    run_as_steam "$STEAMCMD" +login anonymous \
         +force_install_dir "$CS2_DIR" \
-        +app_update "$CS2_APP_ID" validate +quit 2>&1); then
-        log "SteamCMD output:"
-        log_multiline "steamcmd: " "$UPDATE_OUTPUT"
+        +app_update "$CS2_APP_ID" validate +quit > "$TMP_UPDATE_OUTPUT" 2>&1 || update_ret=$?
+    log "SteamCMD output:"
+    log_multiline "steamcmd: " < "$TMP_UPDATE_OUTPUT"
+    rm -f "$TMP_UPDATE_OUTPUT"
+    TMP_UPDATE_OUTPUT=""
+    if [ "$update_ret" -ne 0 ]; then
         log "Attempting to start $SERVICE_NAME after failed update..."
         start_service || true
         exit_with_error "SteamCMD update failed."
     fi
-
-    log "SteamCMD output:"
-    log_multiline "steamcmd: " "$UPDATE_OUTPUT"
 }
 
 read_buildid() {
@@ -212,8 +251,11 @@ read_buildid() {
         return 0
     fi
 
-    # ACF is simple key/value; this is a best-effort parse.
-    awk -F'"' '$2=="buildid"{print $4; exit}' "$manifest" 2> /dev/null || true
+    # ACF is key/value; trim key and value for robustness (whitespace, format variants).
+    awk -F'"' '
+        { gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $4) }
+        $2 == "buildid" && $4 != "" { print $4; exit }
+    ' "$manifest" 2> /dev/null || true
 }
 
 get_remote_buildid() {
@@ -221,19 +263,22 @@ get_remote_buildid() {
 
     if ! output=$(run_as_steam "$STEAMCMD" +login anonymous +app_info_update 1 +app_info_print "$CS2_APP_ID" +quit 2>&1); then
         log "SteamCMD app_info_print failed; output:"
-        log_multiline "steamcmd: " "$output"
+        printf '%s\n' "$output" | log_multiline "steamcmd: "
         printf ''
         return 0
     fi
 
-    # Best-effort: find the buildid of the public branch (inside "branches" -> "public").
+    # Best-effort: find buildid of public branch; fallback to first "buildid" in output.
     buildid=$(
         awk -F'"' '
-            /"branches"/ {in_branches=1}
-            in_branches && /"public"/ {in_public=1}
-            in_public && $2=="buildid" {print $4; exit}
+            /"branches"/ { in_branches=1 }
+            in_branches && /"public"/ { in_public=1 }
+            in_public && $2=="buildid" && $4 != "" { print $4; exit }
         ' <<< "$output" 2> /dev/null
     )
+    if [ -z "$buildid" ]; then
+        buildid=$(awk -F'"' '$2=="buildid" && $4 != "" { print $4; exit }' <<< "$output" 2> /dev/null)
+    fi
 
     printf '%s' "$buildid"
 }
@@ -257,6 +302,7 @@ ensure_service_running() {
 
 #### Main Execution Flow ####
 require_root
+require_steam_user
 ensure_logfile_writable
 require_cmd awk
 require_cmd df

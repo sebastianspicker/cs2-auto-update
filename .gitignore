@@ -16,6 +16,7 @@ DECISIONS.md
 FINDINGS.md
 LOG.md
 REFACTOR_PLAN.md
+.cursor/
 
 # Logs
 *.log
