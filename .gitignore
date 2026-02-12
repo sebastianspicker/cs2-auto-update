@@ -10,13 +10,7 @@ Thumbs.db
 *~
 *.bak
 
-# docs (local findings/logs/decisions)
 .vscode/
-DECISIONS.md
-FINDINGS.md
-LOG.md
-REFACTOR_PLAN.md
-.cursor/
 
 # Logs
 *.log

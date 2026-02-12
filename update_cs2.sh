@@ -28,6 +28,20 @@ CS2_APP_ID="${CS2_APP_ID:-730}"
 REQUIRED_SPACE="${REQUIRED_SPACE:-5000000}" # in KB (e.g., ~5GB)
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
 SLEEP_SECS="${SLEEP_SECS:-5}"
+# Trim leading/trailing whitespace so " 5 " etc. is valid
+LOCKDIR="${LOCKDIR#[[:space:]]*}"
+LOCKDIR="${LOCKDIR%[[:space:]]*}"
+REQUIRED_SPACE="${REQUIRED_SPACE#[[:space:]]*}"
+REQUIRED_SPACE="${REQUIRED_SPACE%[[:space:]]*}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS#[[:space:]]*}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS%[[:space:]]*}"
+SLEEP_SECS="${SLEEP_SECS#[[:space:]]*}"
+SLEEP_SECS="${SLEEP_SECS%[[:space:]]*}"
+# Normalize empty to default (e.g. LOCKDIR="" or trimmed to "" from env)
+[ -z "$LOCKDIR" ] && LOCKDIR="/tmp/update_cs2.lock"
+[ -z "$REQUIRED_SPACE" ] && REQUIRED_SPACE="5000000"
+[ -z "$MAX_ATTEMPTS" ] && MAX_ATTEMPTS="5"
+[ -z "$SLEEP_SECS" ] && SLEEP_SECS="5"
 
 # Testing helper: set to 1 to allow running as non-root (runs SteamCMD as the current user).
 ALLOW_NONROOT="${ALLOW_NONROOT:-0}"
@@ -36,6 +50,7 @@ NO_SLEEP="${NO_SLEEP:-0}"
 #### Internal state ####
 CLEANUP_ENABLED=0
 TMP_UPDATE_OUTPUT=""
+TMP_GET_REMOTE_BUILDID=""
 
 #### Helper Functions ####
 log() {
@@ -49,6 +64,7 @@ log() {
 }
 
 # Read from stdin to avoid ARG_MAX when logging large output (e.g. SteamCMD).
+# Call only with stdin connected (e.g. log_multiline "prefix" < file or ... | log_multiline "prefix").
 log_multiline() {
     local prefix line
     prefix="${1:-}"
@@ -84,6 +100,34 @@ require_cmd() {
     command -v "$cmd" > /dev/null 2>&1 || exit_with_error "Missing required command: $cmd"
 }
 
+# Validate numeric config and LOCKDIR; call after require_root so we can exit_with_error.
+validate_config() {
+    if [[ "$LOCKDIR" == *".."* ]]; then
+        exit_with_error "LOCKDIR must not contain '..': $LOCKDIR"
+    fi
+    if [ -L "$LOCKDIR" ]; then
+        exit_with_error "LOCKDIR must not be a symlink. Use a real directory: $LOCKDIR"
+    fi
+    if [ -e "$LOCKDIR" ] && [ ! -d "$LOCKDIR" ]; then
+        exit_with_error "Lock path exists but is not a directory (stale file?). Remove it: $LOCKDIR"
+    fi
+    if ! [[ "$REQUIRED_SPACE" =~ ^[0-9]+$ ]] || [ "$REQUIRED_SPACE" -lt 0 ]; then
+        exit_with_error "REQUIRED_SPACE must be a non-negative integer (KB). Current: $REQUIRED_SPACE"
+    fi
+    if ! [[ "$MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$MAX_ATTEMPTS" -lt 1 ]; then
+        exit_with_error "MAX_ATTEMPTS must be a positive integer. Current: $MAX_ATTEMPTS"
+    fi
+    if ! [[ "$SLEEP_SECS" =~ ^[0-9]+$ ]] || [ "$SLEEP_SECS" -lt 0 ]; then
+        exit_with_error "SLEEP_SECS must be a non-negative integer. Current: $SLEEP_SECS"
+    fi
+    if [ "$MAX_ATTEMPTS" -gt 100 ]; then
+        exit_with_error "MAX_ATTEMPTS must be at most 100. Current: $MAX_ATTEMPTS"
+    fi
+    if ! [[ "${CS2_APP_ID:-}" =~ ^[0-9]+$ ]]; then
+        exit_with_error "CS2_APP_ID must be a numeric app id (e.g. 730). Current: $CS2_APP_ID"
+    fi
+}
+
 ensure_logfile_writable() {
     local logdir created_dir
     logdir=$(dirname "$LOGFILE")
@@ -94,11 +138,12 @@ ensure_logfile_writable() {
     fi
     touch "$LOGFILE" 2> /dev/null || exit_with_error "Log file is not writable: $LOGFILE"
     # When running as root and we created the dir or file, allow steam user to write (e.g. shared log).
+    # Prefer user:group; fall back to user only if group 'steam' does not exist.
     if [ "${EUID:-$(id -u)}" -eq 0 ] && [ "$ALLOW_NONROOT" != "1" ]; then
         if [ "$created_dir" -eq 1 ]; then
-            chown steam:steam "$logdir" 2> /dev/null || true
+            chown steam:steam "$logdir" 2> /dev/null || chown steam: "$logdir" 2> /dev/null || true
         fi
-        chown steam:steam "$LOGFILE" 2> /dev/null || true
+        chown steam:steam "$LOGFILE" 2> /dev/null || chown steam: "$LOGFILE" 2> /dev/null || true
     fi
 }
 
@@ -125,15 +170,21 @@ cleanup() {
         rm -f "$TMP_UPDATE_OUTPUT"
         TMP_UPDATE_OUTPUT=""
     fi
-    # Remove the lock dir only if we created it and it is not a symlink (safety).
+    if [ -n "$TMP_GET_REMOTE_BUILDID" ] && [ -f "$TMP_GET_REMOTE_BUILDID" ]; then
+        rm -f "$TMP_GET_REMOTE_BUILDID"
+        TMP_GET_REMOTE_BUILDID=""
+    fi
+    # Remove the lock dir only if we created it and it is not a symlink (safety). Idempotent: run once.
     if [ "$CLEANUP_ENABLED" -eq 1 ] && [ -d "$LOCKDIR" ] && [ ! -L "$LOCKDIR" ]; then
         rmdir "$LOCKDIR" 2> /dev/null || rm -rf "$LOCKDIR"
         log "Lock removed."
+        CLEANUP_ENABLED=0
     fi
 }
 trap cleanup EXIT
 
 #### Step 1: Create Lock ####
+# Call validate_config before this so LOCKDIR is not a file/symlink.
 init_lock() {
     # mkdir is atomic; avoids races when two instances start simultaneously.
     if mkdir "$LOCKDIR" 2> /dev/null; then
@@ -177,10 +228,12 @@ run_as_steam() {
         fi
         if command -v su > /dev/null 2>&1; then
             # Use a wrapper script to avoid ARG_MAX with long -c command line.
+            # Note: arguments must not contain newlines (one argument per line in script).
             local su_script su_ret
-            su_script=$(mktemp)
+            su_script=$(mktemp 2> /dev/null) || exit_with_error "Failed to create temporary file for su wrapper (e.g. /tmp full or not writable)."
             printf '%s\n' "$@" >> "$su_script"
             chmod 644 "$su_script" 2> /dev/null || true
+            # shellcheck disable=SC2016
             su -s /bin/bash -c 'cmd=$(head -n1 "$1"); args=(); while IFS= read -r line; do args+=("$line"); done < <(tail -n +2 "$1"); exec "$cmd" "${args[@]}"' steam "$su_script"
             su_ret=$?
             rm -f "$su_script"
@@ -225,7 +278,7 @@ stop_service() {
 #### Step 4: Run SteamCMD Update ####
 run_update() {
     local update_ret
-    TMP_UPDATE_OUTPUT=$(mktemp)
+    TMP_UPDATE_OUTPUT=$(mktemp 2> /dev/null) || exit_with_error "Failed to create temporary file (e.g. /tmp full or not writable)."
     log "Running SteamCMD update as 'steam' user..."
     update_ret=0
     run_as_steam "$STEAMCMD" +login anonymous \
@@ -259,27 +312,39 @@ read_buildid() {
 }
 
 get_remote_buildid() {
-    local output buildid
+    local tmpfile buildid run_ret
 
-    if ! output=$(run_as_steam "$STEAMCMD" +login anonymous +app_info_update 1 +app_info_print "$CS2_APP_ID" +quit 2>&1); then
+    tmpfile=$(mktemp 2> /dev/null) || {
+        log "Warning: mktemp failed, cannot get remote buildid; will fall back to safe update if needed."
+        printf ''
+        return 0
+    }
+    TMP_GET_REMOTE_BUILDID="$tmpfile"
+    run_ret=0
+    run_as_steam "$STEAMCMD" +login anonymous +app_info_update 1 +app_info_print "$CS2_APP_ID" +quit > "$tmpfile" 2>&1 || run_ret=$?
+    if [ "$run_ret" -ne 0 ]; then
         log "SteamCMD app_info_print failed; output:"
-        printf '%s\n' "$output" | log_multiline "steamcmd: "
+        log_multiline "steamcmd: " < "$tmpfile"
+        rm -f "$tmpfile"
+        TMP_GET_REMOTE_BUILDID=""
         printf ''
         return 0
     fi
 
-    # Best-effort: find buildid of public branch; fallback to first "buildid" in output.
+    # Best-effort: find buildid of public branch; fallback to first "buildid" in output (parse from file to avoid large variable).
     buildid=$(
         awk -F'"' '
             /"branches"/ { in_branches=1 }
             in_branches && /"public"/ { in_public=1 }
             in_public && $2=="buildid" && $4 != "" { print $4; exit }
-        ' <<< "$output" 2> /dev/null
+        ' "$tmpfile" 2> /dev/null
     )
     if [ -z "$buildid" ]; then
-        buildid=$(awk -F'"' '$2=="buildid" && $4 != "" { print $4; exit }' <<< "$output" 2> /dev/null)
+        buildid=$(awk -F'"' '$2=="buildid" && $4 != "" { print $4; exit }' "$tmpfile" 2> /dev/null)
     fi
 
+    rm -f "$tmpfile"
+    TMP_GET_REMOTE_BUILDID=""
     printf '%s' "$buildid"
 }
 
@@ -303,6 +368,7 @@ ensure_service_running() {
 #### Main Execution Flow ####
 require_root
 require_steam_user
+validate_config
 ensure_logfile_writable
 require_cmd awk
 require_cmd df
