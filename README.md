@@ -9,6 +9,7 @@ A robust, modular Bash script that keeps your Counter-Strike 2 dedicated server 
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Usage](#usage)
+- [Exit codes](#exit-codes)
 - [Repository Structure](#repository-structure)
 - [Validation (Build / Run / Test)](#validation-build--run--test)
 - [Log Rotation](#log-rotation)
@@ -45,17 +46,22 @@ chmod +x /home/steam/update_cs2.sh
 
 Edit the variables at the top of `update_cs2.sh`:
 
-| Variable         | Description                    | Default              |
-|------------------|--------------------------------|----------------------|
-| `LOCKDIR`        | Lock directory path            | `/tmp/update_cs2.lock` |
-| `LOGFILE`        | Log file path                  | `/home/steam/update_cs2.log` |
-| `CS2_DIR`        | CS2 installation directory     | `/home/steam/cs2`    |
-| `SERVICE_NAME`   | Systemd service name          | `cs2.service`        |
-| `STEAMCMD`       | SteamCMD binary path           | `/usr/games/steamcmd` |
-| `CS2_APP_ID`     | Steam App ID                   | `730`                |
-| `REQUIRED_SPACE` | Min free space (KB)            | `5000000` (~5 GB)    |
-| `MAX_ATTEMPTS`   | Retries for stop/start         | `5`                  |
-| `SLEEP_SECS`     | Sleep between retries (s)      | `5`                  |
+| Variable              | Description                         | Default              |
+|-----------------------|-------------------------------------|----------------------|
+| `LOCKDIR`             | Lock directory path                 | `/tmp/update_cs2.lock` |
+| `LOGFILE`             | Log file path                       | `/home/steam/update_cs2.log` |
+| `CS2_DIR`             | CS2 installation directory          | `/home/steam/cs2`    |
+| `SERVICE_NAME`        | Systemd service name               | `cs2.service`        |
+| `STEAMCMD`            | SteamCMD binary path                | `/usr/games/steamcmd` |
+| `CS2_APP_ID`          | Steam App ID                        | `730`                |
+| `REQUIRED_SPACE`      | Min free space (KB)                 | `5000000` (~5 GB)    |
+| `MAX_ATTEMPTS`        | Retries for stop/start              | `5`                  |
+| `SLEEP_SECS`         | Sleep between retries (s)           | `5`                  |
+| `LOG_LEVEL`           | Log verbosity: `quiet`, `normal`, `verbose` | `normal`     |
+| `NOTIFY_WEBHOOK_URL`  | Optional webhook URL (e.g. Discord/Slack) to notify on successful update | (empty) |
+| `CONFIG_FILE`         | Path to config file (same keys as env); default: next to script `cs2-auto-update.conf` | (optional) |
+
+You can also use a **config file** instead of (or in addition to) environment variables. By default the script looks for `cs2-auto-update.conf` in the same directory as the script. Set `CONFIG_FILE` to override. Format: one `KEY=value` per line; comments with `#`.
 
 ## Usage
 
@@ -72,6 +78,17 @@ sudo crontab -e
 # Add:
 0 7 * * * /home/steam/update_cs2.sh
 ```
+
+**Options:** `--help`, `--version`, `--dry-run` (lock + disk + buildid check only; no service stop/update/start).
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | Success (no update needed, or update applied and service restarted). |
+| `1`  | Error (config, lock, disk, SteamCMD, or service failure). |
+
+`--help` and `--version` exit with `0`.
 
 ## Repository Structure
 
@@ -95,6 +112,7 @@ sudo crontab -e
 ├── docs/
 │   └── ISSUE_AUDIT.md    # CI/findings/decisions audit (historical)
 ├── scripts/
+│   ├── shell-files.env   # Single source of script list for lint/fmt
 │   ├── lint.sh           # bash -n, shellcheck, shfmt -d
 │   ├── fmt.sh            # shfmt format
 │   ├── security.sh       # Secret scan, dependency guard

@@ -11,12 +11,44 @@
 # Usage:
 #   Run as root (e.g., via cron) so no sudo prompts are needed.
 #   Configure the variables below to match your environment.
+#   For testing: ALLOW_NONROOT=1 (run as current user), NO_SLEEP=1 (skip sleep between retries).
 
 set -euo pipefail
 
 # Cron can provide a minimal PATH; keep common locations available.
 PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}:/usr/games"
 export PATH
+
+# Version (match CHANGELOG)
+VERSION="1.5.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Parse arguments (before loading config so --dry-run can be set)
+DRY_RUN="${DRY_RUN:-0}"
+for arg in "$@"; do
+    case "$arg" in
+        -h | --help)
+            echo "Usage: $0 [--help|--version|--dry-run]"
+            echo ""
+            echo "Updates the CS2 dedicated server via SteamCMD and restarts the service when needed."
+            echo "Run as root (e.g. via cron). Key environment variables:"
+            echo "  LOCKDIR, LOGFILE, CS2_DIR, SERVICE_NAME, STEAMCMD, CS2_APP_ID"
+            echo "  REQUIRED_SPACE (KB), MAX_ATTEMPTS, SLEEP_SECS"
+            echo "  ALLOW_NONROOT=1, NO_SLEEP=1 (testing), DRY_RUN=1, LOG_LEVEL=quiet|normal|verbose"
+            echo "  CONFIG_FILE (path to config file), NOTIFY_WEBHOOK_URL (webhook on success)"
+            echo ""
+            echo "Cron example: 0 7 * * * /home/steam/update_cs2.sh"
+            exit 0
+            ;;
+        -v | --version)
+            echo "$VERSION"
+            exit 0
+            ;;
+        --dry-run)
+            DRY_RUN=1
+            ;;
+    esac
+done
 
 #### Configuration ####
 LOCKDIR="${LOCKDIR:-/tmp/update_cs2.lock}"
@@ -46,6 +78,44 @@ SLEEP_SECS="${SLEEP_SECS%[[:space:]]*}"
 # Testing helper: set to 1 to allow running as non-root (runs SteamCMD as the current user).
 ALLOW_NONROOT="${ALLOW_NONROOT:-0}"
 NO_SLEEP="${NO_SLEEP:-0}"
+# quiet = only ERROR/WARNING; normal = all; verbose = all (future: more detail)
+LOG_LEVEL="${LOG_LEVEL:-normal}"
+# Optional webhook URL (e.g. Discord/Slack) to notify on successful update; empty = disabled
+NOTIFY_WEBHOOK_URL="${NOTIFY_WEBHOOK_URL:-}"
+
+# Optional config file (same variable names as env); overrides defaults
+CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/cs2-auto-update.conf}"
+if [ -f "$CONFIG_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%%#*}"
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        if [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            val="${BASH_REMATCH[2]}"
+            case "$key" in
+                LOCKDIR | LOGFILE | CS2_DIR | SERVICE_NAME | STEAMCMD | CS2_APP_ID | \
+                    REQUIRED_SPACE | MAX_ATTEMPTS | SLEEP_SECS | ALLOW_NONROOT | NO_SLEEP | \
+                    LOG_LEVEL | DRY_RUN | NOTIFY_WEBHOOK_URL)
+                    printf -v "$key" '%s' "$val"
+                    ;;
+            esac
+        fi
+    done < "$CONFIG_FILE"
+    # Re-apply trim/normalize after config load
+    LOCKDIR="${LOCKDIR#[[:space:]]*}"
+    LOCKDIR="${LOCKDIR%[[:space:]]*}"
+    REQUIRED_SPACE="${REQUIRED_SPACE#[[:space:]]*}"
+    REQUIRED_SPACE="${REQUIRED_SPACE%[[:space:]]*}"
+    MAX_ATTEMPTS="${MAX_ATTEMPTS#[[:space:]]*}"
+    MAX_ATTEMPTS="${MAX_ATTEMPTS%[[:space:]]*}"
+    SLEEP_SECS="${SLEEP_SECS#[[:space:]]*}"
+    SLEEP_SECS="${SLEEP_SECS%[[:space:]]*}"
+    [ -z "$LOCKDIR" ] && LOCKDIR="/tmp/update_cs2.lock"
+    [ -z "$REQUIRED_SPACE" ] && REQUIRED_SPACE="5000000"
+    [ -z "$MAX_ATTEMPTS" ] && MAX_ATTEMPTS="5"
+    [ -z "$SLEEP_SECS" ] && SLEEP_SECS="5"
+fi
 
 #### Internal state ####
 CLEANUP_ENABLED=0
@@ -55,6 +125,12 @@ TMP_GET_REMOTE_BUILDID=""
 #### Helper Functions ####
 log() {
     local ts msg
+    if [ "$LOG_LEVEL" = "quiet" ]; then
+        case "$*" in
+            ERROR:* | *ERROR* | WARNING:* | *WARNING*) ;;
+            *) return 0 ;;
+        esac
+    fi
     ts=$(date +"%Y-%m-%d %H:%M:%S")
     msg="[$ts] $*"
 
@@ -125,6 +201,9 @@ validate_config() {
     fi
     if ! [[ "${CS2_APP_ID:-}" =~ ^[0-9]+$ ]]; then
         exit_with_error "CS2_APP_ID must be a numeric app id (e.g. 730). Current: $CS2_APP_ID"
+    fi
+    if [[ "$LOGFILE" == *".."* ]]; then
+        exit_with_error "LOGFILE must not contain '..': $LOGFILE"
     fi
 }
 
@@ -365,6 +444,26 @@ ensure_service_running() {
     fi
 }
 
+#### Notify (optional webhook) ####
+notify_webhook() {
+    local url payload
+    url="$1"
+    payload="${2:-CS2 server updated successfully.}"
+    if [ -z "$url" ]; then
+        return 0
+    fi
+    if command -v curl > /dev/null 2>&1; then
+        if curl -fsS -X POST -H "Content-Type: application/json" \
+            -d "{\"text\":\"$payload\"}" "$url" > /dev/null 2>&1; then
+            log "Webhook notification sent."
+        else
+            log "WARNING: Webhook request failed (non-fatal)."
+        fi
+    else
+        log "WARNING: curl not found; skipping webhook (non-fatal)."
+    fi
+}
+
 #### Main Execution Flow ####
 require_root
 require_steam_user
@@ -405,6 +504,12 @@ else
     log "Unable to determine update requirement reliably; falling back to safe update run."
 fi
 
+if [ "$DRY_RUN" = "1" ]; then
+    log "Dry run: skipping service stop, SteamCMD update, and service start."
+    log "=== Update process completed (dry run) ==="
+    exit 0
+fi
+
 stop_service
 run_update
 
@@ -412,6 +517,10 @@ BUILDID_AFTER=$(read_buildid)
 log "Detected buildid after update: ${BUILDID_AFTER:-unknown}"
 
 start_service
+
+if [ -n "${NOTIFY_WEBHOOK_URL:-}" ]; then
+    notify_webhook "$NOTIFY_WEBHOOK_URL" "CS2 server updated successfully."
+fi
 
 log "=== Update process completed ==="
 exit 0

@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-02-19
+### Added
+- CLI options: `--help`, `--version`, `--dry-run` (lock + disk + buildid check only; no update).
+- `LOG_LEVEL=quiet|normal|verbose` (quiet: only ERROR/WARNING).
+- Optional config file: `CONFIG_FILE` or `cs2-auto-update.conf` next to script; same keys as env.
+- Optional webhook notification on successful update: `NOTIFY_WEBHOOK_URL` (e.g. Discord/Slack).
+- `scripts/shell-files.env` as single source of script list for `lint.sh` and `fmt.sh`.
+- LOGFILE path validation (no `..`).
+
+### Changed
+- `.gitignore`: added `.cursor/`; slimmer (Bash-only repo).
+- README: exit codes, config file, webhook, and repository structure (`shell-files.env`).
+
 ## [1.4.0] - 2026-01-31
 ### Added
 - Remote buildid check via `steamcmd +app_info_print` to avoid unnecessary service restarts when up-to-date.

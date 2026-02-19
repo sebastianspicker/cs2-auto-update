@@ -2,26 +2,15 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-
-files=(
-    update_cs2.sh
-    scripts/ci-install-tools.sh
-    scripts/lint.sh
-    scripts/fmt.sh
-    scripts/security.sh
-    tests/run.sh
-    tests/bin/df
-    tests/bin/runuser
-    tests/bin/steamcmd
-    tests/bin/systemctl
-)
+# shellcheck source=scripts/shell-files.env
+source scripts/shell-files.env
 
 echo "==> bash -n"
-bash -n "${files[@]}"
+bash -n "${FILES[@]}"
 
 if command -v shellcheck > /dev/null 2>&1; then
     echo "==> shellcheck"
-    shellcheck -x "${files[@]}"
+    shellcheck -x "${FILES[@]}"
 else
     cat << 'EOF' >&2
 shellcheck not found.
@@ -35,7 +24,7 @@ fi
 
 if command -v shfmt > /dev/null 2>&1; then
     echo "==> shfmt (diff)"
-    shfmt -i 4 -ci -bn -sr -d "${files[@]}"
+    shfmt -i 4 -ci -bn -sr -d "${FILES[@]}"
 else
     cat << 'EOF' >&2
 shfmt not found.
