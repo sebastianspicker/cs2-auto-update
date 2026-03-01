@@ -20,7 +20,7 @@ PATH="${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}:/usr
 export PATH
 
 # Version (match CHANGELOG)
-VERSION="1.6.0"
+VERSION="1.6.1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Parse arguments (before loading config so --dry-run/--config can be set)

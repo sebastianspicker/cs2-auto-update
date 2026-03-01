@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.1] - 2026-03-01
+### Changed
+- Lock handling hardened with owner checks, lock PID metadata, and stale-lock recovery.
+- CLI handling tightened: unknown options and unexpected positional arguments now fail fast.
+- `--dry-run` now has explicit precedence over config values.
+- README operational docs refreshed with failure-aware Mermaid flowcharts and lifecycle outcomes.
+- `docs/ISSUE_AUDIT.md` condensed into a release-facing summary.
+
+### Fixed
+- Config parsing now works on older Bash variants (including `/bin/bash` 3.2).
+- Lock creation failures now return hard failure instead of false "already running" success.
+- Secret scan now reports scanner errors correctly instead of treating them as clean runs.
+- Temp files are created under `${TMPDIR:-/tmp}` to avoid unexpected cwd behavior.
+
+## [1.6.0] - 2026-02-28
+### Added
+- CLI option `--config=FILE` or `-c FILE` to set config file path (alternative to `CONFIG_FILE` env).
+- CLI option `--status`: print up-to-date or update available (local/remote buildid), then exit; no service stop/update/start.
+- Example config file `cs2-auto-update.conf.example`; README Quick start and config file reference.
+- Run duration in completion log (e.g. "Update process completed (12s)").
+- Log level prefixes `[INFO]`, `[WARN]`, `[ERROR]` in log output for parsing.
+
+### Changed
+- Config loading extracted to `load_config_file()`; single list `CONFIG_AND_TRIM_VARS` for config whitelist and trim loop.
+- Defaults consolidated into `apply_defaults()` (single source of truth, run after config load and after trim).
+- Tests: removed redundant `tests/bin/df` (inline mock in `run.sh` only); added `run_validation_test()` helper for validation tests.
+- Docs: `docs/ISSUE_AUDIT.md` condensed to a short decisions and audit summary.
+- Makefile: comment that `ci` target order matches CI pipeline.
+
 ## [1.5.0] - 2026-02-19
 ### Added
 - CLI options: `--help`, `--version`, `--dry-run` (lock + disk + buildid check only; no update).
