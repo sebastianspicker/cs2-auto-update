@@ -1,3 +1,4 @@
+# Same order as CI pipeline (lint, test, security).
 .PHONY: lint fmt test security ci
 
 lint:

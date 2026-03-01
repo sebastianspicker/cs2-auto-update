@@ -19,6 +19,7 @@ logs/
 
 # Temp
 tmp/
+tmp.*
 *.tmp
 *.pid
 *.lock
@@ -27,7 +28,6 @@ tmp/
 dist/
 build/
 out/
-.cache/
 .cache/
 
 # Env

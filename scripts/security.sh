@@ -5,9 +5,18 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 secret_regex='(AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82}|-----BEGIN (RSA|DSA|EC|OPENSSH|PGP) PRIVATE KEY-----|xox[baprs]-[A-Za-z0-9-]{10,48}|sk_live_[0-9a-zA-Z]{24}|AIza[0-9A-Za-z_-]{35})'
 
-if git ls-files -z | xargs -0 grep -nE "$secret_regex"; then
+set +e
+git grep -nI -E "$secret_regex" -- .
+secret_scan_rc=$?
+set -e
+
+if [ "$secret_scan_rc" -eq 0 ]; then
     echo "Potential secret material detected. Redact and remove before committing." >&2
     exit 1
+fi
+if [ "$secret_scan_rc" -gt 1 ]; then
+    echo "Secret scan failed unexpectedly (git grep exit code $secret_scan_rc)." >&2
+    exit 2
 fi
 
 echo "Secret scan passed (no matches)."

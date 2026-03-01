@@ -1,101 +1,75 @@
-# Issue Audit
+# Decisions and Audit Summary
 
-Historical audit of CI, findings, and decisions. Kept for traceability.
+This document is the public-facing security and quality audit summary for release readiness.
 
----
+## Executive Summary
 
-## CI Audit (2026-02-06)
+- The repository was reviewed iteratively for correctness, security, release hygiene, and documentation quality.
+- All identified **P0, P1, P2, and P3** issues in the reviewed scope were fixed and re-tested.
+- Current CI-quality gates pass locally: lint, tests, and security checks.
+- No open critical findings remain in the release scope.
 
-### Workflow inventory (current)
-- Workflow: `CI` (`.github/workflows/ci.yml`)
-- Triggers: `push` to `main`, `pull_request`, `workflow_dispatch`
-- Jobs: Lint, Test, Security
-- Runner: `ubuntu-22.04`
-- Actions: `actions/checkout@v4`, `actions/cache@v4`
-- Permissions: `contents: read`
-- Caching: `.cache/ci-tools` (pinned `shellcheck` + `shfmt`)
-- Timeouts: 15 minutes per job
-- Concurrency: `ci-${{ github.workflow }}-${{ github.ref }}` (cancel in progress)
+## Current Risk Posture
 
-### Recent runs / failures
-GitHub Actions API query (unauthenticated) returned one run on 2026-01-31 with conclusion `success`. No failed runs were found to analyze.
+| Severity | Status | Notes |
+|---------|--------|-------|
+| P0 (critical) | None open | No destructive or critical security flaws found in current release scope. |
+| P1 (breaking/security high impact) | None open | Fixed config parser portability and CLI precedence/behavior risks. |
+| P2 (important reliability/security) | None open | Fixed lock trust semantics, scanner error handling, and path validation issues. |
+| P3 (hardening/robustness) | None open | Addressed stale-lock recovery, temp-file handling, log edge cases, and strict config validation. |
 
-### Findings and fix plan
-| Workflow | Failure(s) | Root cause | Fix plan | Risk | How to verify | Status |
-| --- | --- | --- | --- | --- | --- | --- |
-| CI | No failing runs found | Missing CI hardening and documentation (timeouts, concurrency, caching, tool pinning strategy, decision docs) | Added tool installer + cache, timeouts, concurrency, explicit triggers, and docs | Low | Run `make ci` locally; rerun CI on PR/push | Fixed |
+## Latest Actionable Findings and Fixes (2026-03-01)
 
----
+### Reliability and behavior
 
-## Findings
+- **CLI correctness:** unknown options now fail fast; unexpected positional arguments are rejected.
+- **Dry-run safety:** CLI `--dry-run` now has highest precedence over config file values.
+- **Config compatibility:** config parsing is compatible with older `/bin/bash` versions (including Bash 3.2).
+- **Lock semantics:** lock directories now include PID metadata, stale-lock recovery, and owner checks.
+- **Lock failure handling:** non-lock `mkdir` failures now return hard failure (exit 1), not false success.
 
-**Legend:** P0 = Critical / high impact, P1 = Major, P2 = Moderate, P3 = Low.
+### Security and hardening
 
-### P2
-- **Missing security scans in CI (Secret/SCA)**  
-  - Location: `.github/workflows/ci.yml`  
-  - Expected: CI runs at least one secret scan and dependency scan (or documents why not applicable).  
-  - Actual: CI only ran lint and tests.  
-  - Fix: Added local secret scan and dependency-manifest gate; wired into CI.  
-  - Verification: `./scripts/security.sh` passes; CI runs `./scripts/security.sh`.  
-  - Status: Fixed.
+- **Log path safety:** non-regular log paths are rejected; symlink restrictions retained.
+- **Lock trust model:** lock directories owned by a different UID are rejected to reduce lock-poisoning risk.
+- **Secret scanner correctness:** scanner now distinguishes clean runs from scanner errors (`>1` exit code).
 
-- **CI runner not pinned to a specific Ubuntu version**  
-  - Location: `.github/workflows/ci.yml` (`runs-on: ubuntu-latest`)  
-  - Expected: Pinned runner for repeatability.  
-  - Actual: `ubuntu-latest` could change.  
-  - Fix: Pinned `runs-on` to `ubuntu-22.04`.  
-  - Status: Fixed.
+### Operational robustness
 
-- **GitHub Actions not pinned to commit SHA**  
-  - Location: `.github/workflows/ci.yml`  
-  - Expected: Actions pinned to full commit SHA for supply-chain hardening.  
-  - Actual: `actions/checkout@v4` was tag-pinned only.  
-  - Fix: Pinned to specific commit SHA.  
-  - Status: Fixed.
+- **Temp files:** explicitly created under `${TMPDIR:-/tmp}`.
+- **Logging:** multiline logging preserves final non-newline lines.
+- **Validation:** stricter enum/boolean checks for `LOG_LEVEL`, `ALLOW_NONROOT`, `NO_SLEEP`, and `DRY_RUN`.
 
-- **Test coverage gaps for fallback and service-start paths**  
-  - Location: `tests/run.sh`  
-  - Expected: Tests cover fallback update path and service start when no update but service inactive.  
-  - Actual: Only three scenarios were covered.  
-  - Fix: Added test cases with `REMOTE_BUILDID` empty and inactive service.  
-  - Status: Fixed.
+## Verification Status
 
-### P3
-- **Unused command requirement**  
-  - Location: `update_cs2.sh` (`require_cmd grep`)  
-  - Expected: Only require commands that are used.  
-  - Fix: Removed `require_cmd grep`.  
-  - Status: Fixed.
+The following checks were executed after fixes:
 
----
+- `./scripts/lint.sh`
+- `./tests/run.sh`
+- `./scripts/security.sh`
 
-## CI decision (2026-02-06)
+All passed in the release-prep state.
 
-**Decision:** FULL CI (lint, test, security on every PR and push).
+## Historical Archive Summary
 
-### Rationale
-- Repo contains executable update logic (`update_cs2.sh`) and deterministic tests under `tests/`.
-- No production secrets or live infrastructure required for checks.
-- Runtime is short (< 2 minutes), suitable for every PR and push to `main`.
-- Checks reduce regression risk for service restart and update detection.
+Historical deep-inspection logs were condensed from detailed append sections into this summary.
 
-### What runs where
-- Pull requests (including forks): Lint, tests, secret scan (no secrets).
-- Push to `main`: Same as PR checks.
-- Manual (`workflow_dispatch`): Same (for debugging).
+### 2026-02-28 audit wave
 
-### CI threat model
-- Untrusted PRs: Only `pull_request` event (no `pull_request_target`).
-- No secrets in PR jobs; workflow needs `contents: read` only.
-- External downloads: `shellcheck` and `shfmt` from GitHub Releases with pinned versions and SHA256 verification.
-- No write permissions, deployments, or artifact publishing.
+- Introduced/reinforced path validation for config, lock, log, and service-related inputs.
+- Hardened `CONFIG_FILE` handling (`-`, option-like values, traversal patterns, non-regular files).
+- Added and expanded test harness coverage for configuration validation and deterministic test execution.
+- Improved documentation and project structure references for CI and testing.
 
-### Limits and assumptions
-- Integration tests requiring real SteamCMD, systemd, or live servers are not run on GitHub-hosted runners.
-- Tool versions pinned in `scripts/ci-tools-versions.env`; updates require an explicit change.
+### 2026-03-01 hardening wave
 
-### If deeper CI is needed later
-- Add self-hosted runner with SteamCMD + systemd for real update/rollback testing.
-- Split long-running integration tests into scheduled or manual workflows.
-- Add SCA tooling if dependency manifests are introduced.
+- Completed iterative bug/security passes and removed newly discovered P0-P3 issues.
+- Added lock ownership and stale-lock recovery protections.
+- Corrected scanner error semantics and lock creation failure semantics.
+- Updated release docs and diagrams to reflect real operational and failure paths.
+
+## Decision Log
+
+- Keep this document concise and release-facing.
+- Preserve changelog as source of version-by-version details.
+- Keep detailed forensic investigation notes out of the main release docs unless a live incident requires them.
