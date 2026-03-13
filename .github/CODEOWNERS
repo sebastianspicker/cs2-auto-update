@@ -1,0 +1,5 @@
+# Require maintainer review for CI, scripts, and the main update script.
+/.github/         @sebastianspicker
+/scripts/         @sebastianspicker
+/update_cs2.sh    @sebastianspicker
+/Makefile         @sebastianspicker

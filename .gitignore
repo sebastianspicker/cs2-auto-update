@@ -34,3 +34,18 @@ out/
 .env
 .env.*
 !.env.example
+
+# Secrets / credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+id_ecdsa
+credentials.json
+service-account*.json
+*-secret.json
+*.secrets
